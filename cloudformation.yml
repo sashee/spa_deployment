@@ -1,0 +1,96 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Resources:
+  Bucket:
+    Type: AWS::S3::Bucket
+  OAI:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Ref "AWS::StackId"
+  BucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref Bucket
+      PolicyDocument:
+        Statement:
+        - Action:
+          - s3:GetObject
+          Effect: Allow
+          Resource: !Sub
+          - "${BucketArn}/*"
+          - {BucketArn: !GetAtt Bucket.Arn}
+          Principal:
+            CanonicalUser: !GetAtt OAI.S3CanonicalUserId
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        HttpVersion: http2
+        DefaultRootObject: index.html
+        DefaultCacheBehavior:
+          Compress: true
+          ForwardedValues:
+            QueryString: false
+          TargetOriginId: !Ref Bucket
+          ViewerProtocolPolicy: "redirect-to-https"
+          LambdaFunctionAssociations:
+          # Must deploy to us-east-1
+          - EventType: origin-response
+            LambdaFunctionARN: !Ref CacheControlLambdaVersion
+        Origins:
+          # Must use the regional endpoint as the global one needs some time to propagate
+          # This results in a redirect to the s3 URL for hours which is denied
+          # https://forums.aws.amazon.com/message.jspa?messageID=829913#829913
+        - DomainName: !Sub "${Bucket}.s3.${AWS::Region}.amazonaws.com"
+          Id: !Ref Bucket
+          S3OriginConfig:
+            OriginAccessIdentity: !Sub "origin-access-identity/cloudfront/${OAI}"
+  CacheControlLambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - edgelambda.amazonaws.com
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+  CacheControlLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          exports.handler = async (event) => {
+            const {request, response} = event.Records[0].cf;
+            const {headers} = response;
+            if (request.uri.indexOf(".min.") !== -1) {
+              headers["Cache-Control"] = [{
+                key: "Cache-Control",
+                value: "public, max-age=31536000"
+              }]
+            }else {
+              headers["Cache-Control"] = [{
+                key: "Cache-Control",
+                value: "public, max-age=1"
+              }]
+            }
+            return response;
+          };
+      Handler: index.handler
+      Role: !GetAtt CacheControlLambdaExecutionRole.Arn
+      Runtime: nodejs8.10
+  CacheControlLambdaVersion:
+    Type: AWS::Lambda::Version
+    Properties:
+      FunctionName: !Ref CacheControlLambda
+Outputs:
+  URL:
+    Value: !GetAtt Distribution.DomainName
+  Bucket:
+    Value: !Ref Bucket
