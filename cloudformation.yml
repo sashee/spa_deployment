@@ -69,15 +69,15 @@ Resources:
           exports.handler = async (event) => {
             const {request, response} = event.Records[0].cf;
             const {headers} = response;
-            if (request.uri.indexOf(".min.") !== -1) {
+            if (request.uri.indexOf("index.html") !== -1) {
               headers["Cache-Control"] = [{
                 key: "Cache-Control",
-                value: "public, max-age=31536000"
+                value: "public, max-age=1"
               }]
             }else {
               headers["Cache-Control"] = [{
                 key: "Cache-Control",
-                value: "public, max-age=1"
+                value: "public, max-age=31536000"
               }]
             }
             return response;
