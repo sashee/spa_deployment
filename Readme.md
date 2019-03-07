@@ -13,6 +13,7 @@ You need:
 
 * The aws cli configured
 * jq
+* npm
 
 Steps:
 
